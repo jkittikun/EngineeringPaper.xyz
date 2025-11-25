@@ -2887,6 +2887,11 @@ Please include a link to this sheet in the email to assist in debugging the prob
             <svelte:fragment slot="content">
               <TabContent>
                 <Checkbox 
+                  labelText="Show Border Around Equations"
+                  bind:checked={appState.config.showEquationBorder}
+                  on:check={() => {triggerSaveNeeded();}}
+                />
+                <Checkbox 
                   labelText="Automatically Simplify Symbolic Expressions (unchecking may speed up sheet updates)"
                   bind:checked={appState.config.simplifySymbolicExpressions}
                   on:check={() => {triggerSaveNeeded(); mathCellChanged();}}

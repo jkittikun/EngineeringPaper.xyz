@@ -296,6 +296,7 @@
       <TableCellElement
         {insertMathCellAfter}
         {insertInsertCellAfter}
+        {modal}
         {mathCellChanged}
         {triggerSaveNeeded}
         bind:this={cellElement}

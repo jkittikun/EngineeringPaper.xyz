@@ -3,6 +3,8 @@ import { BaseCell, type DatabaseTableCell } from "./BaseCell";
 import { MathField } from "./MathField.svelte";
 import type { Statement } from "../parser/types";
 
+type XLSX = typeof import("xlsx");
+
 class TableRowLabelField {
   label: string = $state();;
   id: number;
@@ -14,7 +16,19 @@ class TableRowLabelField {
   }
 }
 
+function excelColName(colIndex: number) {
+  let colName = "";
+  while (colIndex >= 0) {
+    colName = String.fromCharCode((colIndex % 26) + 65) + colName;
+    colIndex = Math.floor(colIndex / 26) - 1;
+  }
+  return colName;
+}
+
 export default class TableCell extends BaseCell {
+  static XLSX: XLSX;
+  static spreadsheetExtensions = ".csv,.xlsx,.ods,.xls";
+
   rowLabels: TableRowLabelField[] = $state();
   nextRowLabelId: number;
   parameterFields: MathField[] = $state();
@@ -76,10 +90,157 @@ export default class TableCell extends BaseCell {
     };
   }
 
+  static async init() {
+    if (!this.XLSX) {
+      this.XLSX = await import("xlsx");
+    } 
+  }
+
   get parsePending() {
     return this.parameterFields.reduce((accum, value) => accum || value.parsePending, false) ||
            this.parameterUnitFields.reduce((accum, value) => accum || value.parsePending, false) ||
            this.rhsFields.reduce((accum, row) => accum || row.reduce((rowAccum, value) => rowAccum || value.parsePending, false), false);
+  }
+
+  selectAndLoadSpreadsheetFile(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // no File System Access API, fall back to using input element
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = TableCell.spreadsheetExtensions;
+      input.onchange = (event) => {
+        this.loadFile(input.files[0])
+          .then(() => resolve())
+          .catch(error => reject(error));
+      };
+      input.oncancel = (event) => resolve();
+      input.click();
+    });
+  }
+
+  loadFile(file: File): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (file.size > 0) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            this.populateTable(event);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        }
+        reader.readAsArrayBuffer(file);
+      } else {
+        reject(new Error('Attempt to load empty file'));
+      }
+    });
+  }
+
+  populateTable(fileReader: ProgressEvent<FileReader>){
+    const data = new Uint8Array(fileReader.target.result as ArrayBuffer);
+    const workbook = TableCell.XLSX.read(data);
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const inputRows = TableCell.XLSX.utils.sheet_to_json(worksheet, {header: 1}) as any[][];
+
+    if (inputRows.length < 1) {
+      throw new Error('Imported spreadsheet must contain at least one row');
+    }
+
+    let longestRow = 0;
+    for (const row of inputRows) {
+      if (row.length > longestRow) {
+        longestRow = row.length;
+      }
+    }
+
+    if (longestRow < 2) {
+      throw new Error('Imported spreadsheet must contain at least two columns (one for row labels and one for data)');
+    }
+
+    // Check if first row contains headers (non-numeric values)
+    let hasHeaders = inputRows[0].some(value => value !== undefined && isNaN(Number(value)));
+    
+    let headerRow: string[];
+    let unitsRow: string[] | null = null;
+    let dataStartRow: number;
+
+    if (hasHeaders) {
+      headerRow = inputRows[0].map(value => String(value ?? ""));
+      
+      // Check if second row contains units
+      if (inputRows.length > 1 && inputRows[1].some(value => value !== undefined && isNaN(Number(value)))) {
+        unitsRow = inputRows[1].map(value => String(value ?? ""));
+        dataStartRow = 2;
+      } else {
+        dataStartRow = 1;
+      }
+    } else {
+      // No headers, create default column names
+      headerRow = Array(longestRow).fill(0).map((_, j) => excelColName(j));
+      dataStartRow = 0;
+    }
+
+    if (inputRows.length <= dataStartRow) {
+      throw new Error('Imported spreadsheet must contain at least one data row');
+    }
+
+    // First column is for row labels, remaining columns are data
+    const rowLabelHeader = headerRow[0];
+    const parameterHeaders = headerRow.slice(1);
+    const parameterUnits = unitsRow ? unitsRow.slice(1) : Array(parameterHeaders.length).fill('');
+
+    // Extract data rows
+    const dataRows = inputRows.slice(dataStartRow);
+    
+    if (dataRows.length < 1) {
+      throw new Error('Imported spreadsheet must contain at least one data row');
+    }
+
+    // Populate row labels
+    this.rowLabels = [];
+    this.nextRowLabelId = 1;
+    for (const row of dataRows) {
+      const label = row[0] !== undefined ? String(row[0]) : `Option ${this.nextRowLabelId}`;
+      this.rowLabels.push(new TableRowLabelField(label));
+      this.nextRowLabelId++;
+    }
+
+    // Populate column headers
+    this.parameterFields = [];
+    this.parameterUnitFields = [];
+    this.combinedFields = [];
+    this.nextParameterId = 1;
+    
+    for (let col = 0; col < parameterHeaders.length; col++) {
+      let parameterName: string;
+      if ((parameterHeaders[col] ?? "").trim() === "") {
+        parameterName = `Var${this.nextParameterId}`;
+        this.nextParameterId++;
+      } else {
+        parameterName = parameterHeaders[col];
+      }
+      this.parameterFields.push(new MathField(parameterName, 'parameter'));
+      this.parameterUnitFields.push(new MathField(parameterUnits[col] ?? '', 'units'));
+      this.combinedFields.push(new MathField());
+    }
+
+    // Populate data cells
+    this.rhsFields = [];
+    for (const row of dataRows) {
+      const rhsRow: MathField[] = [];
+      for (let col = 1; col < longestRow; col++) {
+        const value = row[col] !== undefined ? String(row[col]) : '';
+        const columnType = (parameterUnits[col - 1] ?? '').trim() === "" ? "expression" : "number";
+        rhsRow.push(new MathField(value, columnType));
+      }
+      this.rhsFields.push(rhsRow);
+    }
+
+    // Reset selected row and documentation
+    this.selectedRow = 0;
+    this.rowDeltas = [];
+    this.tableStatements = [];
   }
 
   async parseUnitField (latex: string, column: number) {

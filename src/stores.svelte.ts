@@ -116,6 +116,7 @@ export async function addCell(type: CellTypes, index?: number) {
   } else if (type === "documentation") {
     newCell = new DocumentationCell;
   } else if (type === "table") {
+    await TableCell.init();
     newCell = new TableCell;
   } else if (type === "dataTable") {
     await DataTableCell.init();

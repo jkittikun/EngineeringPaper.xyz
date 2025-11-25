@@ -7,7 +7,7 @@
            isMathCellResult,
            isRenderResult} from "./resultTypes";
   import type { CodeFunctionQueryStatement, QueryStatement, SubQueryStatement } from "./parser/types";
-  import { convertUnits, unitsValid } from "./utility";
+  import { convertUnits, unitsValid, loadMathJax } from "./utility";
   import type { MathCellConfig } from "./sheet/Sheet";
   import type MathCell from "./cells/MathCell.svelte";
   import PlotCell from "./cells/PlotCell.svelte";
@@ -55,9 +55,39 @@
   let renderResult = $state(false);
   let renderResultValue = $state("");
   let renderResultIsHTML = $state(false);
+  let showIntermediateAsBlock = $state(false);
+  let intermediateLatexContent = $state("");
 
   let renderElementText: HTMLElement = $state();
   let renderElementHTML: HTMLElement = $state();
+  let intermediateResultElement: HTMLElement = $state();
+
+  function renderIntermediateLatex(node: HTMLElement, params: {content: string}) {
+    function update(params: {content: string}) {
+      if (params.content) {
+        console.log("Action: rendering content:", params.content);
+        node.innerHTML = `\\[${params.content}\\]`;
+        tick().then(() => {
+          if ((window as any).MathJax) {
+            try {
+              console.log("Action: calling MathJax.typeset");
+              (window as any).MathJax.typesetClear([node]);
+              (window as any).MathJax.typeset([node]);
+              console.log("Action: MathJax typeset complete");
+            } catch(e) {
+              console.error("Action: MathJax typeset error:", e);
+            }
+          }
+        });
+      }
+    }
+    
+    update(params);
+    
+    return {
+      update
+    };
+  }
 
   export function getMarkdown(centerEquations: boolean) {
     if (!renderResult) {
@@ -448,10 +478,11 @@
   $effect(() => {
     const statement = mathCell.mathField.statement;
     
-    if (isMathCellResult(result) && statement && statement.type === "query") {
+    if (isMathCellResult(result) && statement && (statement.type === "query" || statement.type === "assignment")) {
       renderResult = false;
       renderResultValue = "";
       renderResultIsHTML = false;
+      
       if (statement.isRange === false && statement.isDataTableQuery === false) { 
         ( {error, resultLatex, resultUnits, resultUnitsLatex, numericResult} = getLatexResult(statement, result, numberConfig) );
         if (untrack(() => error)) {
@@ -459,14 +490,27 @@
           resultUnitsLatex = "";
         }
 
-        if (numberConfig.showIntermediateResults && "subQueries" in statement) {
-          const intermediateResult = getIntermediateLatex(mathCell.mathField.latex, statement, appState.sub_results);
-          if (intermediateResult) {
-            resultLatex = `${intermediateResult} = ${untrack(() => resultLatex)}`;
+        // Use untrack to avoid creating reactive dependencies that cause infinite loops
+        untrack(() => {
+          showIntermediateAsBlock = false;
+          intermediateLatexContent = "";
+          
+          if (numberConfig.showIntermediateResults && "subQueries" in statement && statement.subQueries && statement.subQueries.length > 0) {
+            const intermediateResult = getIntermediateLatex(mathCell.mathField.latex, statement, appState.sub_results);
+            if (intermediateResult) {
+              // Use aligned environment to show calculation steps without repeating the variable name
+              // Format: = substituted_expression
+              //         = final_result
+              showIntermediateAsBlock = true;
+              intermediateLatexContent = `\\begin{aligned} &= ${intermediateResult} \\\\ &= ${resultLatex}${resultUnitsLatex} \\end{aligned}`;
+              resultUnitsLatex = ""; // Units are already included in the aligned block
+            }
           }
-        }
+        });
 
-        if (statement.units) {
+        if (statement.units && !numberConfig.showIntermediateResults) {
+          resultLatex = "=" + untrack(() => resultLatex);
+        } else if (statement.units && numberConfig.showIntermediateResults && !("subQueries" in statement)) {
           resultLatex = "=" + untrack(() => resultLatex);
         }
       }
@@ -511,7 +555,9 @@
           (window as any).MathJax.typeset([renderElementHTML,]);
         }
       });
-    } else if (renderResult && !renderResultIsHTML && renderElementText) {
+    } 
+    
+    if (renderResult && !renderResultIsHTML && renderElementText) {
       renderElementText.innerHTML = "";
       renderElementText.innerText = renderResultValue;
       tick().then(() => {
@@ -519,6 +565,37 @@
           (window as any).MathJax.typeset([renderElementText,]);
         }
       });
+    } 
+    
+    if (showIntermediateAsBlock) {
+      if (intermediateResultElement && intermediateLatexContent) {
+        const element = intermediateResultElement;
+        const content = intermediateLatexContent;
+        element.innerHTML = `\\[${content}\\]`;
+        
+        // Use untrack to avoid reactivity during async operations
+        untrack(() => {
+          // Wait for both DOM update and MathJax to be available
+          tick().then(async () => {
+            // Ensure MathJax is loaded
+            if (!(window as any).MathJax) {
+              await loadMathJax();
+            }
+            
+            // Wait for MathJax startup to complete
+            if ((window as any).MathJax?.startup?.promise) {
+              await (window as any).MathJax.startup.promise;
+            }
+            
+            // Now typeset
+            if (element && (window as any).MathJax) {
+              (window as any).MathJax.typesetPromise([element]).catch((err: any) =>
+                console.error("MathJax typeset error:", err)
+              );
+            }
+          });
+        });
+      }
     }
   });
 </script>
@@ -556,6 +633,16 @@
 
   .render-container {
     align-self: stretch;
+  }
+
+  .intermediate-result {
+    display: block;
+    margin-left: 1rem;
+    margin-top: 0.25rem;
+  }
+
+  .intermediate-result.mathjax_process {
+    min-height: 1em;
   }
 
   span.extra-buttons {
@@ -597,7 +684,7 @@
 </style>
 
 <span
-  class={{container: true, 'render-result': renderResult && !mathCell.mathField.parsingError}}
+  class={{container: true, 'render-result': (renderResult || showIntermediateAsBlock) && !mathCell.mathField.parsingError}}
 >
   <MathField
     editable={true}
@@ -625,15 +712,24 @@
       />
     {/if}
   {:else if result && mathCell.mathField.statement &&
-      mathCell.mathField.statement.type === "query"}
+      (mathCell.mathField.statement.type === "query" || mathCell.mathField.statement.type === "assignment")}
     {#if !(result instanceof Array)}
       {#if resultLatex.trim() && !renderResult}
         <span class="hidden" id="{`result-value-${index}`}">{resultLatex}</span>
         <span class="hidden" id="{`result-units-${index}`}">{resultUnits}</span>
-        <MathField
-          hidden={appState.resultsInvalid}
-          latex={`${resultLatex}${resultUnitsLatex}`}
-        />
+        {#if showIntermediateAsBlock}
+          <div
+            class={{hidden: appState.resultsInvalid, mathjax_process: true, "intermediate-result": true}}
+            style="margin-left: 1em;"
+            bind:this={intermediateResultElement}
+          >
+          </div>
+        {:else}
+          <MathField
+            hidden={appState.resultsInvalid}
+            latex={`${resultLatex}${resultUnitsLatex}`}
+          />
+        {/if}
       {:else if renderResult}
         {#if renderResultIsHTML}
           <div

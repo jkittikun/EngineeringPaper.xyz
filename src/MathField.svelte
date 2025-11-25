@@ -82,6 +82,34 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     switch (e.key) {
+      case '=':
+        // Auto-exit any nested structure (subscript, superscript, fraction, sqrt, etc) when typing =
+        if (!e.shiftKey && !e[appState.modifierKey] && editable) {
+          e.preventDefault();
+          
+          // Keep moving after parent until we can't move anymore (we're at top level)
+          let previousPos = mathLiveField.position;
+          let attempts = 0;
+          const maxAttempts = 10; // safety limit
+          
+          while (attempts < maxAttempts) {
+            mathLiveField.executeCommand('moveAfterParent');
+            const newPos = mathLiveField.position;
+            
+            // If position didn't change, we're at the top level
+            if (newPos === previousPos) {
+              break;
+            }
+            
+            previousPos = newPos;
+            attempts++;
+          }
+          
+          // Now insert the = at the top level
+          mathLiveField.executeCommand(['insert', '=']);
+          return;
+        }
+        break;
       case 'Tab': 
         if(!e.shiftKey) {
           e.preventDefault();
@@ -314,11 +342,18 @@
 
   math-field.editable {
     min-width: 2rem;
-    border: solid 1px gray;
     padding-left: 2px;
     padding-right: 2px;
     padding-top: 1px;
     padding-bottom: 1px;
+  }
+
+  math-field.editable.show-border {
+    border: solid 1px gray;
+  }
+
+  math-field.editable:not(.show-border) {
+    border: none;
   }
 
   math-field.hidden {
@@ -367,6 +402,7 @@
   onmount={setup}
   bind:this={mathLiveField}
   class:editable
+  class:show-border={editable && appState.config.showEquationBorder}
   class:parsing-error={parsingError && !parsePending}
   class:hidden
 >

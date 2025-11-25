@@ -6,7 +6,7 @@
 
   import { onMount, tick } from "svelte";
 
-  import type TableCell from "./cells/TableCell.svelte";
+  import TableCell from "./cells/TableCell.svelte";
   import type { MathField as MathFieldClass } from "./cells/MathField.svelte";
 
   import MathField from "./MathField.svelte";
@@ -24,12 +24,15 @@
   import ShowDataCards from "carbon-icons-svelte/lib/ShowDataCards.svelte";
   import Row from "carbon-icons-svelte/lib/Row.svelte";
   import IconButton from "./IconButton.svelte";
+  import TextButton from "./TextButton.svelte";
+  import type { ModalInfo } from "./types";
 
   interface Props {
     index: number;
     tableCell: TableCell;
     insertMathCellAfter: (arg: {detail: {index: number}}) => void;
     insertInsertCellAfter: (arg: {detail: {index: number}}) => void;
+    modal: (arg: {detail: {modalInfo: ModalInfo}}) => void;
     mathCellChanged: () => void;
     triggerSaveNeeded: (pendingMathCellChange?: boolean) => void;
   }
@@ -39,6 +42,7 @@
     tableCell,
     insertMathCellAfter,
     insertInsertCellAfter,
+    modal,
     mathCellChanged,
     triggerSaveNeeded
   }: Props = $props();
@@ -219,6 +223,23 @@
     mathCellChanged();
   }
 
+  async function handleLoadSpreadsheet() {
+    try {
+      modal({detail: {modalInfo: {state: "importingSpreadsheet", modalOpen: true, heading: 'Importing Spreadsheet'}}});
+      await TableCell.init();
+      await tableCell.selectAndLoadSpreadsheetFile();
+      await tableCell.parseTableStatements();
+      modal({detail: {modalInfo: {state: "importingSpreadsheet", modalOpen: false, heading: 'Importing Spreadsheet'}}});
+
+      appState.cells[index] = appState.cells[index];
+      
+      triggerSaveNeeded();
+      mathCellChanged();
+    } catch (e) {
+      modal({detail: {modalInfo: {state: "error", modalOpen: true, error: e, heading: 'Importing Spreadsheet'}}});
+    }
+  }
+
   $effect( () => {
    if (appState.activeCell === index) {
       focus();
@@ -294,12 +315,27 @@
   }
 
   @media print {
-    div.item.spread-align-center, div.right-buttons, div.bottom-buttons {
+    div.item.spread-align-center, div.right-buttons, div.bottom-buttons, div.top-buttons {
       display: none;
     }
   }
 
+  div.top-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+
 </style>
+
+<div class="top-buttons">
+  <TextButton
+    onclick={handleLoadSpreadsheet}
+  >
+    Import Spreadsheet
+  </TextButton>
+</div>
 
 {#if tableCell.rowDeltas.length > 0}
   <div

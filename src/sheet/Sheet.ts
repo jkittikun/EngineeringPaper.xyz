@@ -29,6 +29,7 @@ export type Config = {
   simplifySymbolicExpressions?: boolean; // some early sheets won't have this property
   convertFloatsToFractions?: boolean; // some early sheets won't have this property
   fluidConfig?: FluidConfig; // some early sheets won't have this property
+  showEquationBorder?: boolean; // some early sheets won't have this property
 };
 
 type Notation = "auto" | "fixed" | "exponential" | "engineering";
@@ -58,7 +59,8 @@ export function getDefaultConfig(): Config {
     customBaseUnits: getDefaultBaseUnits(),
     simplifySymbolicExpressions: true,
     convertFloatsToFractions: true,
-    fluidConfig: getDefaultFluidConfig()
+    fluidConfig: getDefaultFluidConfig(),
+    showEquationBorder: false
   };
 }
 
@@ -73,10 +75,10 @@ export function getDefaultFluidConfig(): FluidConfig {
 function getDefaultMathCellConfig(): MathCellConfig {
   return {
     symbolicOutput: false,
-    showIntermediateResults: false,
+    showIntermediateResults: true,
     formatOptions: {
       notation: "auto",
-      precision: 15,
+      precision: 3,
       lowerExp: -3,
       upperExp: 5,
     }
@@ -114,7 +116,8 @@ export function configsEqual(config1: Config, config2: Config): boolean {
   return mathConfigsEqual(config1.mathCellConfig, config2.mathCellConfig) && 
          baseUnitsEqual(config1.customBaseUnits, config2.customBaseUnits) &&
          config1.simplifySymbolicExpressions === config2.simplifySymbolicExpressions && 
-         config1.convertFloatsToFractions === config2.convertFloatsToFractions;
+         config1.convertFloatsToFractions === config2.convertFloatsToFractions &&
+         config1.showEquationBorder === config2.showEquationBorder;
 }
 
 export function copyMathConfig(input: MathCellConfig): MathCellConfig {
@@ -334,7 +337,8 @@ export function normalizeConfig(config: Config | undefined): Config {
   config.simplifySymbolicExpressions = config.simplifySymbolicExpressions ?? true; // simplifySymboicExpressions may not exist
   config.convertFloatsToFractions = config.convertFloatsToFractions ?? true; // convertFloatsToFractions may not exist
   config.fluidConfig = config.fluidConfig ?? getDefaultFluidConfig(); // fluidConfig may not exist
-  config.mathCellConfig.showIntermediateResults = config.mathCellConfig.showIntermediateResults ?? false; // may not exist
+  config.mathCellConfig.showIntermediateResults = config.mathCellConfig.showIntermediateResults ?? true; // may not exist
+  config.showEquationBorder = config.showEquationBorder ?? false; // showEquationBorder may not exist
 
   return config;
 }
